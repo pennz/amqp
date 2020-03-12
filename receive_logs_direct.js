@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
 var amqp = require('amqplib/callback_api');  // ampq Advance Message Queuing Protocol
+var args = process.argv.slice(2);
+
+if (args.length == 0) {
+    console.log("Usage: receive_logs_direct.js [info] [warning] [error]");
+    process.exit(1);
+}
 
 amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
     if (error0) {
@@ -12,9 +18,9 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
             throw error1;
         }
 
-        var exchange = 'logs';
+        var exchange = 'direct_logs';
 
-        channel.assertExchange(exchange, 'fanout', {
+        channel.assertExchange(exchange, 'direct', {
             durable: false
         });
 
@@ -26,11 +32,14 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
                     throw error2;
                 }
                 console.log(" [*] Waiting for messages in %s. To exit press CTRL+c", q.queue);
-                channel.bindQueue(q.queue, exchange, '');
+
+                args.forEach(function(serverity) {
+                    channel.bindQueue(q.queue, exchange, serverity);
+                });
 
                 channel.consume(q.queue, function(msg) {
                     if (msg.content) {
-                        console.log(" [x] %s", msg.content.toString());
+                        console.log(" [x] %s: '%s'", msg.fields.routingKey, msg.content.toString());
                     }
                 }, {
                     noAck: true
