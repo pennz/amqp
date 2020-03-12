@@ -11,14 +11,10 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
         if (error1) {
             throw error1;
         }
-        var queue = 'task_queue';
         var msg = process.argv.slice(2).join(' ') || "Hello World!";
 
-        channel.assertQueue(queue, {
-            durable: true});
-        channel.sendToQueue(queue, Buffer.from(msg), {
-            persistent: true
-        });
+        channel.assertExchange('logs', 'fanout', {durable: false});
+        channel.publish('logs', '', Buffer.from(msg));  // temporary queues, fanout e.g. logger, we want to hear about all log messages
         console.log(" [x] Send %s", msg);
 
     });

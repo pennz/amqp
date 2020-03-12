@@ -11,24 +11,32 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
         if (error1) {
             throw error1;
         }
-        var queue = 'task_queue';
 
-        channel.assertQueue(queue, {
-            durable: true});
+        var exchange = 'logs';
 
-        channel.prefetch(1);
-        console.log(" [*] Waiting for message in %s. To exit press CTRL+c", queue);
-
-        channel.consume(queue, function(msg) {
-            var secs = msg.content.toString().split('.').length - 1;
-
-            console.log(" [x] Received %s", msg.content.toString());
-            setTimeout(function() {
-                console.log(" [x] Done");
-            }, secs * 1000);
-        }, {
-            noAck: false
+        channel.assertExchange(exchange, 'fanout', {
+            durable: false
         });
+
+        channel.assertQueue('', {
+            exclusive: true
+        }, // the queue will be deleted after channel closed
+            function(error2, q) {
+                if (error2) {
+                    throw error2;
+                }
+                console.log(" [*] Waiting for messages in %s. To exit press CTRL+c", q.queue);
+                channel.bindQueue(q.queue, exchange, '');
+
+                channel.consume(q.queue, function(msg) {
+                    if (msg.content) {
+                        console.log(" [x] %s", msg.content.toString());
+                    }
+                }, {
+                    noAck: true
+                });
+            }
+        );
 
     });
     setTimeout(function() {
