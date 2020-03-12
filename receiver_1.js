@@ -11,13 +11,19 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
         if (error1) {
             throw error1;
         }
-        var queue = 'hello';
+        var queue = 'task_queue';
 
         channel.assertQueue(queue, {
-            durable: false});
+            durable: true});
         console.log(" [*] Waiting for message in %s. To exit press CTRL+c", queue);
+
         channel.consume(queue, function(msg) {
+            var secs = msg.content.toString().split('.').length - 1;
+
             console.log(" [x] Received %s", msg.content.toString());
+            setTimeout(function() {
+                console.log(" [x] Done");
+            }, secs * 1000);
         }, {
             noAck: true
         });
@@ -26,5 +32,5 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
     setTimeout(function() {
         connection.close();
         process.exit(0);
-    }, 500);
+    }, 60 * 1000);
 });

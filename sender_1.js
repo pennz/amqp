@@ -11,12 +11,14 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
         if (error1) {
             throw error1;
         }
-        var queue = 'hello';
-        var msg = 'hello world';
+        var queue = 'task_queue';
+        var msg = process.argv.slice(2).join(' ') || "Hello World!";
 
         channel.assertQueue(queue, {
-            durable: false});
-        channel.sendToQueue(queue, Buffer.from(msg));
+            durable: true});
+        channel.sendToQueue(queue, Buffer.from(msg), {
+            persistent: true
+        });
         console.log(" [x] Send %s", msg);
 
     });
