@@ -4,7 +4,7 @@ var amqp = require('amqplib/callback_api');  // ampq Advance Message Queuing Pro
 var args = process.argv.slice(2);
 
 if (args.length == 0) {
-    console.log("Usage: receive_logs_direct.js [info] [warning] [error]");
+    console.log("Usage: receive_logs_topic.js <facility>.<severity> ...");
     process.exit(1);
 }
 
@@ -18,9 +18,9 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
             throw error1;
         }
 
-        var exchange = 'direct_logs';
+        var exchange = 'topic_logs';
 
-        channel.assertExchange(exchange, 'direct', {
+        channel.assertExchange(exchange, 'topic', {
             durable: false
         });
 
@@ -33,8 +33,8 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
                 }
                 console.log(" [*] Waiting for messages in %s. To exit press CTRL+c", q.queue);
 
-                args.forEach(function(serverity) {
-                    channel.bindQueue(q.queue, exchange, serverity);
+                args.forEach(function(key) {
+                    channel.bindQueue(q.queue, exchange, key);
                 });
 
                 channel.consume(q.queue, function(msg) {

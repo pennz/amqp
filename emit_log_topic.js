@@ -12,14 +12,14 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
             throw error1;
         }
 
-        var exchange = 'direct_logs';
+        var exchange = 'topic_logs';
         var args = process.argv.slice(2);
+        var key = (args.length > 0) ? args[0] : 'anonymous.info';
         var msg = args.slice(1).join(' ') || "Hello World!";
-        var serverity = (args.length > 0) ? args[0] : 'info';
 
-        channel.assertExchange(exchange, 'direct', {durable: false});
-        channel.publish(exchange, serverity, Buffer.from(msg));  // temporary queues, fanout e.g. logger, we want to hear about all log messages
-        console.log(" [x] Send %s: '%s'", serverity, msg);
+        channel.assertExchange(exchange, 'topic', {durable: false});
+        channel.publish(exchange, key, Buffer.from(msg));  // temporary queues, fanout e.g. logger, we want to hear about all log messages
+        console.log(" [x] Send %s: '%s'", key, msg);
 
     });
     setTimeout(function() {
