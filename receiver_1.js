@@ -15,6 +15,8 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
 
         channel.assertQueue(queue, {
             durable: true});
+
+        channel.prefetch(1);
         console.log(" [*] Waiting for message in %s. To exit press CTRL+c", queue);
 
         channel.consume(queue, function(msg) {
@@ -25,7 +27,7 @@ amqp.connect('amqp://vtool.duckdns.org', function(error0, connection) {
                 console.log(" [x] Done");
             }, secs * 1000);
         }, {
-            noAck: true
+            noAck: false
         });
 
     });
