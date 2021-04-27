@@ -9,13 +9,7 @@ import (
 	"github.com/streadway/amqp"
 )
 
-func failOnError(err error, msg string) {
-	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-	}
-}
-
-func main() {
+func emitLogTopic() {
 	conn, err := amqp.Dial(config.AMQPURL)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
@@ -36,10 +30,10 @@ func main() {
 	failOnError(err, "Failed to declare an exchange")
 
 	body := bodyFrom(os.Args)
-	routing_key := severityFrom(os.Args)
+	routingKey := severityFrom(os.Args)
 	err = ch.Publish(
 		"test-logs_topic", // exchange
-		routing_key,       // routing key
+		routingKey,        // routing key
 		false,             // mandatory
 		false,             // immediate
 		amqp.Publishing{
@@ -48,7 +42,7 @@ func main() {
 		})
 	failOnError(err, "Failed to publish a message")
 
-	log.Printf(" [%s] Sent %s", routing_key, body)
+	log.Printf(" [%s] Sent %s", routingKey, body)
 }
 
 func bodyFrom(args []string) string {

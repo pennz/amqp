@@ -7,13 +7,7 @@ import (
 	"github.com/streadway/amqp"
 )
 
-func failOnError(err error, msg string) {
-	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-	}
-}
-
-func main() {
+func sendHelloWorld() {
 	conn, err := amqp.Dial(config.AMQPURL)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
