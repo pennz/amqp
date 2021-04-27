@@ -25,29 +25,30 @@ func main() {
 	defer ch.Close()
 
 	err = ch.ExchangeDeclare(
-		"logs_topic", // name
-		"topic",      // type
-		true,         // durable
-		false,        // auto-deleted
-		false,        // internal
-		false,        // no-wait
-		nil,          // arguments
+		"test-logs_topic", // name
+		"topic",           // type
+		true,              // durable
+		false,             // auto-deleted
+		false,             // internal
+		false,             // no-wait
+		nil,               // arguments
 	)
 	failOnError(err, "Failed to declare an exchange")
 
 	body := bodyFrom(os.Args)
+	routing_key := severityFrom(os.Args)
 	err = ch.Publish(
-		"logs_topic",          // exchange
-		severityFrom(os.Args), // routing key
-		false,                 // mandatory
-		false,                 // immediate
+		"test-logs_topic", // exchange
+		routing_key,       // routing key
+		false,             // mandatory
+		false,             // immediate
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(body),
 		})
 	failOnError(err, "Failed to publish a message")
 
-	log.Printf(" [x] Sent %s", body)
+	log.Printf(" [%s] Sent %s", routing_key, body)
 }
 
 func bodyFrom(args []string) string {
