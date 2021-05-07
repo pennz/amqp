@@ -1,15 +1,38 @@
 package main
 
 import (
+	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/pennz/amqp/config"
 	"github.com/streadway/amqp"
+
+	"crypto/tls"
+	"crypto/x509"
 )
 
 func receiveLogTopic() {
-	conn, err := amqp.Dial(config.AMQPURL)
+
+	var tlsConfig tls.Config
+	tlsConfig.RootCAs = x509.NewCertPool()
+
+	if ca, err := ioutil.ReadFile("/etc/letsencrypt/archive/vtool.duckdns.org/chain1_ff.pem"); err == nil {
+		if ok := tlsConfig.RootCAs.AppendCertsFromPEM(ca); ok == false {
+			log.Fatalf("%s", "Failed to AppendCertsFromPEM")
+		}
+	} else {
+		failOnError(err, "Failed to read cacert")
+	}
+
+	if cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/archive/vtool.duckdns.org/fullchain1.pem", "/etc/letsencrypt/archive/vtool.duckdns.org/privkey1.pem"); err == nil {
+		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
+	} else {
+		failOnError(err, "Failed to LoadX509KeyPair")
+	}
+
+	// see a note about Common Name (CN) at the top
+	conn, err := amqp.DialTLS(config.AMQPURL, &tlsConfig)
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
