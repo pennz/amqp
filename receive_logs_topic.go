@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
 
 	"github.com/pennz/amqp/config"
 	"github.com/streadway/amqp"
@@ -14,15 +15,22 @@ import (
 
 func receiveLogTopic() {
 
+	if len(os.Args) < 2 {
+		log.Printf("Usage: %s [binding_key]...", os.Args[0])
+		os.Exit(0)
+	}
+
 	var tlsConfig tls.Config
 	tlsConfig.RootCAs = x509.NewCertPool()
 
+	// If you use self generated CA root (chain), you can append it. Otherwise,
+	// the default ones trusted can work?
 	if ca, err := ioutil.ReadFile("/etc/letsencrypt/archive/vtool.duckdns.org/chain1_ff.pem"); err == nil {
 		if ok := tlsConfig.RootCAs.AppendCertsFromPEM(ca); ok == false {
 			log.Fatalf("%s", "Failed to AppendCertsFromPEM")
 		}
 	} else {
-		failOnError(err, "Failed to read cacert")
+		failOnError(err, "Failed to read PEM encoded certificates")
 	}
 
 	if cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/archive/vtool.duckdns.org/fullchain1.pem", "/etc/letsencrypt/archive/vtool.duckdns.org/privkey1.pem"); err == nil {
@@ -34,7 +42,7 @@ func receiveLogTopic() {
 	// see a note about Common Name (CN) at the top
 	conn, err := amqp.DialTLS(config.AMQPURL, &tlsConfig)
 	failOnError(err, "Failed to connect to RabbitMQ")
-	defer conn.Close()
+	defer func() { log.Printf("Connection Closing.\n"); conn.Close(); log.Printf("Connection Closed.\n") }()
 
 	ch, err := conn.Channel()
 	failOnError(err, "Failed to open a channel")
@@ -61,10 +69,6 @@ func receiveLogTopic() {
 	)
 	failOnError(err, "Failed to declare a queue")
 
-	if len(os.Args) < 2 {
-		log.Printf("Usage: %s [binding_key]...", os.Args[0])
-		os.Exit(0)
-	}
 	for _, s := range os.Args[1:] {
 		log.Printf("Binding queue %s to exchange %s with routing key %s", q.Name, "test-logs_topic", s)
 		err = ch.QueueBind(
@@ -140,5 +144,13 @@ func receiveLogTopic() {
 		2021/05/08 08:35:10  [*] Waiting for logs. To exit press CTRL+C
 		2021/05/08 08:35:40  [x] {0xc0000c25a0 map[]   1 0     0001-01-01 00:00:00 +0000 UTC    ctag-./amqp-1 0 1 false  test-queue [110 111 32 100 97 116 97]},  no data
 	*/
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for sig := range c {
+			// sig is a ^C, handle it
+			log.Printf("%v", sig)
+		}
+	}()
 	<-forever
 }
