@@ -46,7 +46,7 @@ func receiveLogTopic() {
 
 	ch, err := conn.Channel()
 	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
+	defer func() { log.Printf("conn.Channel Closing.\n"); ch.Close(); log.Printf("conn.Channel Closed.\n") }()
 
 	err = ch.ExchangeDeclare(
 		"test-logs_topic", // name
@@ -149,7 +149,9 @@ func receiveLogTopic() {
 	go func() {
 		for sig := range c {
 			// sig is a ^C, handle it
-			log.Printf("%v", sig)
+			log.Printf("%v received.", sig)
+			forever <- true // main routine can go now, is will also ask other goroutines to exit
+			break           // just one ^C is enough
 		}
 	}()
 	<-forever
