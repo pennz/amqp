@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/pennz/amqp/config"
 	"github.com/streadway/amqp"
 )
 
@@ -19,54 +18,41 @@ func failOnError(err error, msg string) {
 	}
 }
 
-var myConn *amqp.Connection
+func myTLSConfig() *tls.Config {
+	var tlsConfig tls.Config
+	tlsConfig.RootCAs = x509.NewCertPool()
 
-func setUpMyAMQPConnection() *amqp.Connection {
-	if myConn == nil {
-		var tlsConfig tls.Config
-		tlsConfig.RootCAs = x509.NewCertPool()
-
-		// If you use self generated CA root (chain), you can append it. Otherwise,
-		// the default ones trusted can work?
-		if ca, err := ioutil.ReadFile("/etc/letsencrypt/archive/vtool.duckdns.org/chain1_ff.pem"); err == nil {
-			if ok := tlsConfig.RootCAs.AppendCertsFromPEM(ca); ok == false {
-				log.Fatalf("%s", "Failed to AppendCertsFromPEM")
-			}
-		} else {
-			failOnError(err, "Failed to read PEM encoded certificates")
+	// If you use self generated CA root (chain), you can append it. Otherwise,
+	// the default ones trusted can work?
+	if ca, err := ioutil.ReadFile("/etc/letsencrypt/archive/vtool.duckdns.org/chain1_ff.pem"); err == nil {
+		if ok := tlsConfig.RootCAs.AppendCertsFromPEM(ca); ok == false {
+			log.Fatalf("%s", "Failed to AppendCertsFromPEM")
 		}
-
-		if cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/archive/vtool.duckdns.org/fullchain1.pem", "/etc/letsencrypt/archive/vtool.duckdns.org/privkey1.pem"); err == nil {
-			tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
-		} else {
-			failOnError(err, "Failed to LoadX509KeyPair")
-		}
-
-		// see a note about Common Name (CN) at the top
-		var err error
-		myConn, err = amqp.DialTLS(config.AMQPURL, &tlsConfig)
-		failOnError(err, "Failed to connect to RabbitMQ")
+	} else {
+		failOnError(err, "Failed to read PEM encoded certificates")
 	}
-	return myConn
-}
 
-func closeMyConnection() {
-	log.Printf("[M] Connection Closing.\n")
-	myConn.Close()
-	log.Printf("[M] Connection Closed.\n")
+	if cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/archive/vtool.duckdns.org/fullchain1.pem", "/etc/letsencrypt/archive/vtool.duckdns.org/privkey1.pem"); err == nil {
+		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
+	} else {
+		failOnError(err, "Failed to LoadX509KeyPair")
+	}
+	return &tlsConfig
 }
 
 // Session copied from https://pkg.go.dev/github.com/streadway/amqp#example-package
 type Session struct {
-	name            string
-	logger          *log.Logger
-	connection      *amqp.Connection
-	channel         *amqp.Channel
-	done            chan bool
-	notifyConnClose chan *amqp.Error
-	notifyChanClose chan *amqp.Error
-	notifyConfirm   chan amqp.Confirmation
-	isReady         bool
+	name               string
+	logger             *log.Logger
+	connection         *amqp.Connection
+	channel            *amqp.Channel
+	done               chan bool
+	notifyConnClose    chan *amqp.Error
+	notifyChanClose    chan *amqp.Error
+	notifyConfirm      chan amqp.Confirmation
+	clientPublishState chan int
+	isReady            bool
+	publishCount       int
 }
 
 const (
@@ -78,34 +64,46 @@ const (
 
 	// When resending messages the server didn't confirm
 	resendDelay = 5 * time.Second
+
+	closeDelay = 1 * time.Second
+
+	NotifyMax = 10
 )
 
 var (
 	errNotConnected  = errors.New("not connected to a server")
 	errAlreadyClosed = errors.New("already closed: not connected to the server")
 	errShutdown      = errors.New("session is shutting down")
+	errConfirm       = errors.New("confirmation is not right")
+	tlsConfig        = myTLSConfig()
 )
 
 // NewSession creates a new consumer state instance, and automatically
 // attempts to connect to the server.
-func NewSession(name string, addr string) *Session {
+func NewSession(name string, addr string, tlsConfig *tls.Config) *Session {
 	session := Session{
 		logger: log.New(os.Stdout, "", log.LstdFlags),
 		name:   name,
 		done:   make(chan bool),
 	}
-	go session.handleReconnect(addr)
+	go session.handleReconnect(addr, tlsConfig)
 	return &session
 }
 
 // handleReconnect will wait for a connection error on
 // notifyConnClose, and then continuously attempt to reconnect.
-func (session *Session) handleReconnect(addr string) {
+func (session *Session) handleReconnect(addr string, tlsConfig *tls.Config) {
 	for {
 		session.isReady = false
 		log.Println("Attempting to connect")
 
-		conn, err := session.connect(addr)
+		var conn *amqp.Connection
+		var err error
+		if tlsConfig == nil {
+			conn, err = session.connect(addr)
+		} else {
+			conn, err = session.connectTLS(addr, tlsConfig)
+		}
 
 		if err != nil {
 			log.Println("Failed to connect. Retrying...")
@@ -117,10 +115,13 @@ func (session *Session) handleReconnect(addr string) {
 			}
 			continue
 		}
+		// Connection connected
 
 		if done := session.handleReInit(conn); done {
-			break
-		}
+			break // session.done and we can exit
+		} // else we will reconnect, in the handleReInit, notifyConnClose is
+		// monitored and if received, it will started over from the connection
+		// establishing
 	}
 }
 
@@ -153,6 +154,19 @@ func (session *Session) handleReInit(conn *amqp.Connection) bool {
 			log.Println("Channel closed. Re-running init...")
 		}
 	}
+}
+
+// connect will create a new AMQP connection with given TLS config
+func (session *Session) connectTLS(addr string, tlsConfig *tls.Config) (*amqp.Connection, error) {
+	conn, err := amqp.DialTLS(addr, tlsConfig)
+
+	if err != nil {
+		return nil, err
+	}
+
+	session.changeConnection(conn)
+	log.Println("Connected!")
+	return conn, nil
 }
 
 // connect will create a new AMQP connection
@@ -196,7 +210,7 @@ func (session *Session) init(conn *amqp.Connection) error {
 
 	session.changeChannel(ch)
 	session.isReady = true
-	log.Println("Setup!")
+	log.Printf("Setup! isReady: %v\n", session.isReady)
 
 	return nil
 }
@@ -214,9 +228,53 @@ func (session *Session) changeConnection(connection *amqp.Connection) {
 func (session *Session) changeChannel(channel *amqp.Channel) {
 	session.channel = channel
 	session.notifyChanClose = make(chan *amqp.Error)
-	session.notifyConfirm = make(chan amqp.Confirmation, 1)
+	session.notifyConfirm = make(chan amqp.Confirmation, NotifyMax)
+	session.clientPublishState = make(chan int, NotifyMax)
 	session.channel.NotifyClose(session.notifyChanClose)
 	session.channel.NotifyPublish(session.notifyConfirm)
+
+	err := session.channel.Confirm(false)
+	failOnError(err, "[S] Failed to set channel to confirm mode")
+}
+
+func (session *Session) WaitPublishConfirm() {
+	for {
+		confirm, confirmOK := <-session.notifyConfirm
+		if confirmOK {
+			//_, ok := <-session.clientPublishState // if got one confirmed, client side should have already sent it.
+			log.Printf("Publish Stat: len %d\n", len(session.clientPublishState))
+			if true {
+				log.Printf("[S] Publish confirmed for %v", confirm)
+				if len(session.clientPublishState) == 0 {
+					close(session.clientPublishState)
+				}
+			} else {
+				log.Printf("[S] Error, publish state changed to finish too early\n")
+				failOnError(errConfirm, "[S] Failed to declare an exchange")
+			}
+		}
+	}
+}
+
+func (session *Session) Publish(exchange string, key string, data []byte) error {
+	err := session.channel.Publish(
+		exchange, // exchange
+		key,      // routing key
+		true,     // mandatory
+		false,    // immediate
+		amqp.Publishing{
+			ContentType: "text/plain",
+			Body:        data,
+		})
+	if err == nil {
+		session.clientPublishState <- session.publishCount
+		session.publishCount++
+
+		log.Printf("[S] Client published with RK: %s, msgCount %d, len %d \n",
+			key, session.publishCount, len(session.clientPublishState))
+		return nil
+	}
+	return err
 }
 
 // Push will push data onto the queue, and wait for a confirm.
@@ -297,6 +355,12 @@ func (session *Session) Close() error {
 	if !session.isReady {
 		return errAlreadyClosed
 	}
+
+	for len(session.clientPublishState) != 0 {
+		time.Sleep(closeDelay)
+		log.Printf("Wait %v for closing the session\n", closeDelay)
+	}
+
 	err := session.channel.Close()
 	if err != nil {
 		return err
@@ -309,3 +373,49 @@ func (session *Session) Close() error {
 	session.isReady = false
 	return nil
 }
+
+func (session *Session) confirm(noWait bool) error {
+	err := session.channel.Confirm(noWait)
+	return err
+}
+
+func (session *Session) ExchangeDeclare(name string, typeName string) error {
+	if !session.isReady {
+		log.Println("Session is not ready and wait.")
+	waitReady:
+		for {
+			select {
+			case <-session.done:
+				return errShutdown
+			case <-time.After(reInitDelay):
+				log.Printf("session.isReady = %v\n", session.isReady)
+
+				if session.isReady {
+					log.Printf("Waited %v and found session is ready\n", reInitDelay)
+					break waitReady
+				}
+				log.Printf("Waited %v and found session is still not ready\n", reInitDelay)
+			}
+		}
+	}
+
+	err := session.channel.ExchangeDeclare(
+		name,     // name
+		typeName, // type
+		true,     // durable
+		false,    // auto-deleted
+		false,    // internal
+		false,    // no-wait
+		nil,      // arguments
+	)
+	return err
+}
+
+/*serverErrorReturnCh := make(chan amqp.Return, 10)
+ch.NotifyReturn(serverErrorReturnCh)
+
+go func() {
+	for errorReturn := <-serverErrorReturnCh; ; {
+		log.Printf("[S] Failed for a publish %s\n", errorReturn.ReplyText)
+	}
+}()*/

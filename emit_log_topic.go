@@ -4,50 +4,16 @@ import (
 	"log"
 	"os"
 
-	"github.com/streadway/amqp"
+	"github.com/pennz/amqp/config"
 )
 
 func emitLogTopic() {
 
-	connCloseCh := make(chan bool)
-	defer func() {
-		<-connCloseCh
-		closeMyConnection()
-	}()
+	s := NewSession("test-session", config.AMQPURL, tlsConfig)
+	defer s.Close()
 
-	chCloseCh := make(chan bool)
-	ch, err := myConn.Channel()
-	failOnError(err, "[S] Failed to open a channel")
-	defer func() {
-		<-chCloseCh
-		log.Printf("[S] conn.Channel Closing.\n")
-		ch.Close()
-		log.Printf("[S] conn.Channel Closed.\n")
-	}()
-
-	msgOpCh := make(chan int, 10)
-
-	err = ch.Confirm(false)
-	failOnError(err, "[S] Failed to set channel to confirm mode")
-
-	/*serverErrorReturnCh := make(chan amqp.Return, 10)
-	ch.NotifyReturn(serverErrorReturnCh)
-
-	go func() {
-		for errorReturn := <-serverErrorReturnCh; ; {
-			log.Printf("[S] Failed for a publish %s\n", errorReturn.ReplyText)
-		}
-	}()*/
-
-	err = ch.ExchangeDeclare(
-		"test-logs_topic", // name
-		"topic",           // type
-		true,              // durable
-		false,             // auto-deleted
-		false,             // internal
-		false,             // no-wait
-		nil,               // arguments
-	)
+	//var err error
+	err := s.ExchangeDeclare("test-logs_topic", "topic")
 	failOnError(err, "[S] Failed to declare an exchange")
 
 	args := make([]string, len(os.Args)-1)
@@ -55,45 +21,12 @@ func emitLogTopic() {
 	routingKey := severityFrom(args)
 	body := bodyFrom(args)
 
-	msgCount := 0
 	for _, msg := range body {
-		err = ch.Publish(
-			"test-logs_topic", // exchange
-			routingKey,        // routing key
-			true,              // mandatory
-			false,             // immediate
-			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        []byte(msg),
-			})
+		err = s.Publish("test-logs_topic", routingKey, []byte(msg))
 		failOnError(err, "[S] Failed to publish a message")
-		log.Printf("[S] Client published with RK: %s, msgCount %d \n",
-			routingKey,
-			msgCount)
-
-		msgOpCh <- msgCount
-		msgCount++
 	}
-	close(msgOpCh)
 
-	confirmationCh := make(chan amqp.Confirmation, 10) // 10 Some magic number
-	ch.NotifyPublish(confirmationCh)
-
-	go func() {
-		for confirm := <-confirmationCh; ; {
-			msgCount, ok := <-msgOpCh
-			if !ok {
-				log.Printf("[S] Publish confirmed for all.\n")
-				chCloseCh <- true
-				connCloseCh <- true
-			} else {
-				log.Printf("[S] RK: %s, Publish confirmed for %v, msgCount %d \n",
-					routingKey,
-					confirm,
-					msgCount)
-			}
-		}
-	}()
+	s.WaitPublishConfirm() // signal the channel, and the sesion go routine can return
 
 	log.Printf("[S] Sent %s with routing key %s Done.", body, routingKey)
 }
