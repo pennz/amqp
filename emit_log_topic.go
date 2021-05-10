@@ -3,20 +3,41 @@ package main
 import (
 	"log"
 	"os"
-	"strings"
 
-	"github.com/pennz/amqp/config"
 	"github.com/streadway/amqp"
 )
 
 func emitLogTopic() {
-	conn, err := amqp.Dial(config.AMQPURL)
-	failOnError(err, "Failed to connect to RabbitMQ")
-	defer conn.Close()
 
-	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer ch.Close()
+	connCloseCh := make(chan bool)
+	defer func() {
+		<-connCloseCh
+		closeMyConnection()
+	}()
+
+	chCloseCh := make(chan bool)
+	ch, err := myConn.Channel()
+	failOnError(err, "[S] Failed to open a channel")
+	defer func() {
+		<-chCloseCh
+		log.Printf("[S] conn.Channel Closing.\n")
+		ch.Close()
+		log.Printf("[S] conn.Channel Closed.\n")
+	}()
+
+	msgOpCh := make(chan int, 10)
+
+	err = ch.Confirm(false)
+	failOnError(err, "[S] Failed to set channel to confirm mode")
+
+	/*serverErrorReturnCh := make(chan amqp.Return, 10)
+	ch.NotifyReturn(serverErrorReturnCh)
+
+	go func() {
+		for errorReturn := <-serverErrorReturnCh; ; {
+			log.Printf("[S] Failed for a publish %s\n", errorReturn.ReplyText)
+		}
+	}()*/
 
 	err = ch.ExchangeDeclare(
 		"test-logs_topic", // name
@@ -27,40 +48,73 @@ func emitLogTopic() {
 		false,             // no-wait
 		nil,               // arguments
 	)
-	failOnError(err, "Failed to declare an exchange")
+	failOnError(err, "[S] Failed to declare an exchange")
 
-	body := bodyFrom(os.Args)
-	routingKey := severityFrom(os.Args)
-	err = ch.Publish(
-		"test-logs_topic", // exchange
-		routingKey,        // routing key
-		false,             // mandatory
-		false,             // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(body),
-		})
-	failOnError(err, "Failed to publish a message")
+	args := make([]string, len(os.Args)-1)
+	copy(args[1:], os.Args[2:])
+	routingKey := severityFrom(args)
+	body := bodyFrom(args)
 
-	log.Printf(" [%s] Sent %s", routingKey, body)
+	msgCount := 0
+	for _, msg := range body {
+		err = ch.Publish(
+			"test-logs_topic", // exchange
+			routingKey,        // routing key
+			true,              // mandatory
+			false,             // immediate
+			amqp.Publishing{
+				ContentType: "text/plain",
+				Body:        []byte(msg),
+			})
+		failOnError(err, "[S] Failed to publish a message")
+		log.Printf("[S] Client published with RK: %s, msgCount %d \n",
+			routingKey,
+			msgCount)
+
+		msgOpCh <- msgCount
+		msgCount++
+	}
+	close(msgOpCh)
+
+	confirmationCh := make(chan amqp.Confirmation, 10) // 10 Some magic number
+	ch.NotifyPublish(confirmationCh)
+
+	go func() {
+		for confirm := <-confirmationCh; ; {
+			msgCount, ok := <-msgOpCh
+			if !ok {
+				log.Printf("[S] Publish confirmed for all.\n")
+				chCloseCh <- true
+				connCloseCh <- true
+			} else {
+				log.Printf("[S] RK: %s, Publish confirmed for %v, msgCount %d \n",
+					routingKey,
+					confirm,
+					msgCount)
+			}
+		}
+	}()
+
+	log.Printf("[S] Sent %s with routing key %s Done.", body, routingKey)
 }
 
-func bodyFrom(args []string) string {
-	var s string
-	if (len(args) < 3) || os.Args[2] == "" {
-		s = "hello"
+func bodyFrom(args []string) []string {
+	var s []string
+
+	if (len(args) < 3) || args[2] == "" {
+		s = []string{"hello"}
 	} else {
-		s = strings.Join(args[2:], " ")
+		s = args[2:]
 	}
 	return s
 }
 
 func severityFrom(args []string) string {
 	var s string
-	if (len(args) < 2) || os.Args[1] == "" {
+	if (len(args) < 2) || args[1] == "" {
 		s = "anonymous.info"
 	} else {
-		s = os.Args[1]
+		s = args[1]
 	}
 	return s
 }

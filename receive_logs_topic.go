@@ -1,52 +1,29 @@
 package main
 
 import (
-	"io/ioutil"
+	"bytes"
 	"log"
 	"os"
 	"os/signal"
-
-	"github.com/pennz/amqp/config"
-	"github.com/streadway/amqp"
-
-	"crypto/tls"
-	"crypto/x509"
+	"time"
 )
 
-func receiveLogTopic() {
+func receiveLogTopic(queueName string, routingKeys []string) {
 
-	if len(os.Args) < 2 {
-		log.Printf("Usage: %s [binding_key]...", os.Args[0])
+	if len(routingKeys) <= 0 {
+		log.Printf("Usage: COMMAND r queueName routingKey...")
 		os.Exit(0)
 	}
 
-	var tlsConfig tls.Config
-	tlsConfig.RootCAs = x509.NewCertPool()
+	defer closeMyConnection()
 
-	// If you use self generated CA root (chain), you can append it. Otherwise,
-	// the default ones trusted can work?
-	if ca, err := ioutil.ReadFile("/etc/letsencrypt/archive/vtool.duckdns.org/chain1_ff.pem"); err == nil {
-		if ok := tlsConfig.RootCAs.AppendCertsFromPEM(ca); ok == false {
-			log.Fatalf("%s", "Failed to AppendCertsFromPEM")
-		}
-	} else {
-		failOnError(err, "Failed to read PEM encoded certificates")
-	}
-
-	if cert, err := tls.LoadX509KeyPair("/etc/letsencrypt/archive/vtool.duckdns.org/fullchain1.pem", "/etc/letsencrypt/archive/vtool.duckdns.org/privkey1.pem"); err == nil {
-		tlsConfig.Certificates = append(tlsConfig.Certificates, cert)
-	} else {
-		failOnError(err, "Failed to LoadX509KeyPair")
-	}
-
-	// see a note about Common Name (CN) at the top
-	conn, err := amqp.DialTLS(config.AMQPURL, &tlsConfig)
-	failOnError(err, "Failed to connect to RabbitMQ")
-	defer func() { log.Printf("Connection Closing.\n"); conn.Close(); log.Printf("Connection Closed.\n") }()
-
-	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
-	defer func() { log.Printf("conn.Channel Closing.\n"); ch.Close(); log.Printf("conn.Channel Closed.\n") }()
+	ch, err := myConn.Channel()
+	failOnError(err, "[R] Failed to open a channel")
+	defer func() {
+		log.Printf("[R] conn.Channel Closing.\n")
+		ch.Close()
+		log.Printf("[R] conn.Channel Closed.\n")
+	}()
 
 	err = ch.ExchangeDeclare(
 		"test-logs_topic", // name
@@ -57,38 +34,39 @@ func receiveLogTopic() {
 		false,             // no-wait
 		nil,               // arguments
 	)
-	failOnError(err, "Failed to declare an exchange")
+	failOnError(err, "[R] Failed to declare an exchange")
 
 	q, err := ch.QueueDeclare(
-		"test-queue", // name
-		false,        // durable
-		false,        // delete when unused
-		true,         // exclusive
-		false,        // no-wait
-		nil,          // arguments
+		queueName, // name
+		true,      // durable
+		false,     // delete when unused
+		false,     // exclusive
+		false,     // no-wait
+		nil,       // arguments
 	)
-	failOnError(err, "Failed to declare a queue")
+	failOnError(err, "[R] Failed to declare a queue")
 
-	for _, s := range os.Args[1:] {
-		log.Printf("Binding queue %s to exchange %s with routing key %s", q.Name, "test-logs_topic", s)
+	for _, s := range routingKeys {
+		log.Printf("[R] Binding queue %s to exchange %s with routing key %s", q.Name, "test-logs_topic", s)
 		err = ch.QueueBind(
 			q.Name,            // queue name
 			s,                 // routing key
 			"test-logs_topic", // exchange
-			false,
-			nil)
-		failOnError(err, "Failed to bind a queue")
+			false,             // noWait
+			nil)               // amqp.Table
+		failOnError(err, "[R] Failed to bind a queue")
 	}
 
 	msgs, err := ch.Consume(
 		q.Name, // queue
 		"",     // consumer
-		true,   // auto ack
+		false,  // auto ack
 		false,  // exclusive
 		false,  // no local
 		false,  // no wait
 		nil,    // args
 	)
+	failOnError(err, "[R] Failed to register a consumer")
 	/*
 
 		// Delivery captures the fields for a previously delivered message resident in
@@ -127,29 +105,35 @@ func receiveLogTopic() {
 			Body []byte
 		}
 	*/
-	failOnError(err, "Failed to register a consumer")
 
 	messageLoopHandler := func() {
 		for d := range msgs {
-			log.Printf(" [x] %v,  %s", d, d.Body)
+			log.Printf("[R] Received %d %s", d.DeliveryTag, d.Body)
+			dotCount := bytes.Count(d.Body, []byte("."))
+			t := time.Duration(dotCount)
+			log.Printf("[W] Waiting for handling the message.Time estimated: %v\n", t*time.Second)
+			time.Sleep(t * time.Second)
+			log.Printf("[W] Working done for %v\n", t*time.Second)
+
+			d.Ack(false)
 		}
 	}
 	go messageLoopHandler()
 
 	forever := make(chan bool)
-	log.Printf(" [*] Waiting for logs. To exit press CTRL+C")
+	log.Printf("[R] Waiting for logs. To exit press CTRL+C")
 
 	/*
 		2021/05/08 08:35:10 Binding queue test-queue to exchange test-logs_topic with routing key a.info
-		2021/05/08 08:35:10  [*] Waiting for logs. To exit press CTRL+C
-		2021/05/08 08:35:40  [x] {0xc0000c25a0 map[]   1 0     0001-01-01 00:00:00 +0000 UTC    ctag-./amqp-1 0 1 false  test-queue [110 111 32 100 97 116 97]},  no data
+		2021/05/08 08:35:10  [R] Waiting for logs. To exit press CTRL+C
+		2021/05/08 08:35:40  [R] {0xc0000c25a0 map[]   1 0     0001-01-01 00:00:00 +0000 UTC    ctag-./amqp-1 0 1 false  test-queue [110 111 32 100 97 116 97]},  no data
 	*/
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
 		for sig := range c {
 			// sig is a ^C, handle it
-			log.Printf("%v received.", sig)
+			log.Printf("[R] %v received.\n", sig)
 			forever <- true // main routine can go now, is will also ask other goroutines to exit
 			break           // just one ^C is enough
 		}

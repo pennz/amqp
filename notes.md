@@ -54,3 +54,12 @@ func main () {
     wg.Wait()
 }
 ```
+
+## Reliability
+
+- TCP ensures packets send end to end, but only in the transportation layer.
+- Acknowledgements and confirms indicate that messages have been received and
+acted upon by the peer application. (application semantic layer).
+
+	ch.NotifyReturn
+    check the document page
