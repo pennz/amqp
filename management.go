@@ -73,7 +73,7 @@ const (
 var (
 	errNotConnected  = errors.New("not connected to a server")
 	errAlreadyClosed = errors.New("already closed: not connected to the server")
-	errShutdown      = errors.New("session is shutting down")
+	errShutdown      = errors.New("session has been shut down")
 	errConfirm       = errors.New("confirmation is not right")
 	tlsConfig        = myTLSConfig()
 )
@@ -146,6 +146,7 @@ func (session *Session) handleReInit(conn *amqp.Connection) bool {
 
 		select {
 		case <-session.done:
+			log.Println("Session closed. Exit ReInit.")
 			return true
 		case <-session.notifyConnClose:
 			log.Println("Connection closed. Reconnecting...")
@@ -241,12 +242,13 @@ func (session *Session) WaitPublishConfirm() {
 	for {
 		confirm, confirmOK := <-session.notifyConfirm
 		if confirmOK {
-			//_, ok := <-session.clientPublishState // if got one confirmed, client side should have already sent it.
+			_, ok := <-session.clientPublishState // if got one confirmed, client side should have already sent it.
 			log.Printf("Publish Stat: len %d\n", len(session.clientPublishState))
-			if true {
+			if ok {
 				log.Printf("[S] Publish confirmed for %v", confirm)
 				if len(session.clientPublishState) == 0 {
 					close(session.clientPublishState)
+					break
 				}
 			} else {
 				log.Printf("[S] Error, publish state changed to finish too early\n")
@@ -372,6 +374,7 @@ func (session *Session) Close() error {
 		time.Sleep(closeDelay)
 		log.Printf("Wait %v for closing the session\n", closeDelay)
 	}
+	close(session.done) // Notify in client side, session thing is doen
 
 	err := session.channel.Close()
 	if err != nil {
@@ -381,8 +384,8 @@ func (session *Session) Close() error {
 	if err != nil {
 		return err
 	}
-	close(session.done)
 	session.isReady = false
+	log.Printf("Session Closed.")
 	return nil
 }
 
