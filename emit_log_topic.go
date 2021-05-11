@@ -26,7 +26,8 @@ func emitLogTopic() {
 		failOnError(err, "[S] Failed to publish a message")
 	}
 
-	s.WaitPublishConfirm() // signal the channel, and the sesion go routine can return
+	// s.WaitPublishConfirm() // signal the channel, and the sesion go routine can return. Publish is
+	// safe now.
 
 	log.Printf("[S] Sent %s with routing key %s Done.", body, routingKey)
 }
