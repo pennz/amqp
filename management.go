@@ -255,6 +255,18 @@ func (session *Session) WaitPublishConfirm() {
 		}
 	}
 }
+func (session *Session) Consume(queue string, autoACK bool) (<-chan amqp.Delivery, error) {
+	msgs, err := session.channel.Consume(
+		queue,   // queue
+		"",      // consumer
+		autoACK, // auto ack
+		false,   // exclusive
+		false,   // no local
+		false,   // no wait
+		nil,     // args
+	)
+	return msgs, err
+}
 
 func (session *Session) Publish(exchange string, key string, data []byte) error {
 	err := session.channel.Publish(
@@ -376,6 +388,48 @@ func (session *Session) Close() error {
 
 func (session *Session) confirm(noWait bool) error {
 	err := session.channel.Confirm(noWait)
+	return err
+}
+
+func (session *Session) QueueBind(queue string, key string, exchange string) error {
+	err := session.channel.QueueBind(
+		queue,    // queue name
+		key,      // routing key
+		exchange, // exchange
+		false,    // noWait
+		nil)      // amqp.Table
+	return err
+}
+
+func (session *Session) QueueDeclare(name string) error {
+	if !session.isReady {
+		log.Println("Session is not ready and wait.")
+	waitReady:
+		for {
+			select {
+			case <-session.done:
+				return errShutdown
+			case <-time.After(reInitDelay):
+				log.Printf("session.isReady = %v\n", session.isReady)
+
+				if session.isReady {
+					log.Printf("Waited %v and found session is ready\n", reInitDelay)
+					break waitReady
+				}
+				log.Printf("Waited %v and found session is still not ready\n", reInitDelay)
+			}
+		}
+	}
+
+	_, err := session.channel.QueueDeclare(
+		name,  // name
+		true,  // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+
 	return err
 }
 

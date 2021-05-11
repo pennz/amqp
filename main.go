@@ -17,7 +17,7 @@ func main() {
 			log.Printf("Usage: %s r queueName routingKey...", os.Args[0])
 			os.Exit(0)
 		}
-		// receiveLogTopic(os.Args[2], os.Args[3:])
+		receiveLogTopic(os.Args[2], os.Args[3:])
 	}
 	if os.Args[1] == "s" {
 		emitLogTopic()
