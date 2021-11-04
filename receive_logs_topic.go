@@ -80,7 +80,7 @@ func receiveLogTopic(queueName string, routingKeys []string) {
 
 	messageLoopHandler := func() {
 		for d := range msgs {
-			log.Printf("[R] Received %d %s", d.DeliveryTag, d.Body)
+			log.Printf("[R] Received tag:%d body:%s", d.DeliveryTag, d.Body)
 			dotCount := bytes.Count(d.Body, []byte("."))
 			t := time.Duration(dotCount)
 			log.Printf("[W] Waiting for handling the message.Time estimated: %v\n", t*time.Second)
