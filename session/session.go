@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"crypto/tls"
@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/pennz/amqp/utils"
 	"github.com/streadway/amqp"
 )
 
@@ -60,6 +61,8 @@ func NewSession(name string, addr string, tlsConfig *tls.Config) *Session {
 		name:   name,
 		done:   make(chan bool),
 	}
+
+	log.Println(addr)
 	go session.handleReconnect(addr, tlsConfig)
 	return &session
 }
@@ -74,6 +77,7 @@ func (session *Session) handleReconnect(addr string, tlsConfig *tls.Config) {
 		var conn *amqp.Connection
 		var err error
 		if tlsConfig == nil {
+			log.Println("Use session.connect")
 			conn, err = session.connect(addr)
 		} else {
 			conn, err = session.connectTLS(addr, tlsConfig)
@@ -89,9 +93,10 @@ func (session *Session) handleReconnect(addr string, tlsConfig *tls.Config) {
 			}
 			continue
 		}
+
 		// Connection connected
 
-		if done := session.handleReInit(conn); done {
+		if done := session.handleReInit(conn); done { // channel, queue setup
 			break // session.done and we can exit
 		} // else we will reconnect, in the handleReInit, notifyConnClose is
 		// monitored and if received, it will started over from the connection
@@ -210,7 +215,7 @@ func (session *Session) changeChannel(channel *amqp.Channel) {
 	session.channel.NotifyPublish(session.notifyConfirm)
 
 	//err := session.channel.Confirm(false)
-	//failOnError(err, "[S] Failed to set channel to confirm mode")
+	//utils.FailOnError(err, "[S] Failed to set channel to confirm mode")
 }
 
 // WaitPublishConfirm will wait until all public is confirmed and close the
@@ -229,7 +234,7 @@ func (session *Session) WaitPublishConfirm() {
 				}
 			} else {
 				log.Printf("[S] Error, publish state changed to finish too early\n")
-				failOnError(errConfirm, "[S] Failed to declare an exchange")
+				utils.FailOnError(errConfirm, "[S] Failed to declare an exchange")
 			}
 		}
 	}

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/pennz/amqp/config"
+	"github.com/pennz/amqp/session"
+	"github.com/pennz/amqp/utils"
 )
 
 func receiveLogTopic(queueName string, routingKeys []string) {
@@ -17,14 +19,14 @@ func receiveLogTopic(queueName string, routingKeys []string) {
 		os.Exit(0)
 	}
 
-	s := NewSession("test-session", config.AMQPURL, tlsConfig)
+	s := session.NewSession("test-session", config.AMQPURL, nil)
 	defer s.Close()
 
 	err := s.ExchangeDeclare("test-logs_topic", "topic")
-	failOnError(err, "[S] Failed to declare an exchange")
+	utils.FailOnError(err, "[S] Failed to declare an exchange")
 
 	err = s.QueueDeclare(queueName)
-	failOnError(err, "[R] Failed to declare a queue")
+	utils.FailOnError(err, "[R] Failed to declare a queue")
 
 	for _, k := range routingKeys {
 		log.Printf("[R] Binding queue %s to exchange %s with routing key %s", queueName, "test-logs_topic", k)
@@ -34,11 +36,11 @@ func receiveLogTopic(queueName string, routingKeys []string) {
 			k,                 // routing key
 			"test-logs_topic", // exchange
 		)
-		failOnError(err, "[R] Failed to bind a queue")
+		utils.FailOnError(err, "[R] Failed to bind a queue")
 	}
 
 	msgs, err := s.Consume(queueName, false)
-	failOnError(err, "[R] Failed to register a consumer")
+	utils.FailOnError(err, "[R] Failed to register a consumer")
 	/*
 
 		// Delivery captures the fields for a previously delivered message resident in

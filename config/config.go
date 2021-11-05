@@ -1,5 +1,5 @@
 package config
 
 const (
-	AMQPURL = "amqps://test:testamqp@www.pengyuzhou.com/"
+	AMQPURL = "amqps://dbilfyct:Ton3w2pxU_QUPCJcyvOfpiHtBSnFAUBm@crane.rmq.cloudamqp.com/dbilfyct"
 )

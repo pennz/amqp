@@ -5,16 +5,18 @@ import (
 	"os"
 
 	"github.com/pennz/amqp/config"
+	"github.com/pennz/amqp/session"
+	"github.com/pennz/amqp/utils"
 )
 
 func emitLogTopic() {
 
-	s := NewSession("test-session", config.AMQPURL, tlsConfig)
+	s := session.NewSession("test-session", config.AMQPURL, nil)
 	defer s.Close()
 
 	//var err error
 	err := s.ExchangeDeclare("test-logs_topic", "topic")
-	failOnError(err, "[S] Failed to declare an exchange")
+	utils.FailOnError(err, "[S] Failed to declare an exchange")
 
 	args := make([]string, len(os.Args)-1)
 	copy(args[1:], os.Args[2:])
@@ -23,7 +25,7 @@ func emitLogTopic() {
 
 	for _, msg := range body {
 		err = s.Publish("test-logs_topic", routingKey, []byte(msg))
-		failOnError(err, "[S] Failed to publish a message")
+		utils.FailOnError(err, "[S] Failed to publish a message")
 	}
 
 	// s.WaitPublishConfirm() // signal the channel, and the sesion go routine can return. Publish is
